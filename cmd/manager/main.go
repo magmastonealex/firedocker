@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	imgToPull := "redis"
+	imgToPull := "ubuntu"
 	tagToPull := "latest"
 
 	ref, err := name.ParseReference(fmt.Sprintf("%s:%s", imgToPull, tagToPull), name.WithDefaultRegistry("index.docker.io"))
