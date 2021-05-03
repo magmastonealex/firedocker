@@ -108,7 +108,7 @@ func main() {
 			panic(err)
 		}
 		// Extract this into workdir...
-		tarExtract := exec.Command("tar", "-xzf", "-", "-C", "workdir/")
+		tarExtract := exec.Command("tar", "-xpzf", "-", "-C", "workdir/")
 		tarErr, _ := tarExtract.StderrPipe()
 		tarOut, _ := tarExtract.StdoutPipe()
 		tarIn, _ := tarExtract.StdinPipe()

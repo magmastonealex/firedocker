@@ -1,11 +1,16 @@
 package main
 
+// build w/ netgo
+// go build -tags netgo
+// find . -print0 | cpio --null --create --verbose --format=newc > ../initrd.cpio
+
 import (
 	"fmt"
+	"net"
 	"os"
-	"os/exec"
 	"syscall"
 
+	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
@@ -144,41 +149,45 @@ func main() {
 	if _, err := syscall.Setsid(); err != nil {
 		panic(fmt.Errorf("failed to enter new session ID: %v", err))
 	}
-	/*
-		fmt.Println("Setting IP to 172.19.0.2/24")
-		ifce, err := tenus.NewLinkFrom("tap0")
-		if err != nil {
-			panic(fmt.Errorf("failed to find ifce: %v", err))
-		}
 
-		network := &net.IPNet{
-			IP:   net.ParseIP("172.19.0.2"),
-			Mask: net.CIDRMask(24, 32),
-		}
-		err = ifce.SetLinkIp(network.IP, network)
-		if err != nil {
-			panic(fmt.Errorf("failed to ste IP: %v", err))
-		}
-
-		gateway := net.ParseIP("172.19.0.1")
-		err = ifce.SetLinkDefaultGw(&gateway)
-		if err != nil {
-			panic(fmt.Errorf("failed to set GW: %v", err))
-		}*/
-
-	os.Stdout.Close()
-	os.Stderr.Close()
-	os.Stdin.Close()
-
-	fmt.Println("and now getty...")
-
-	mksqfs := exec.Command("/usr/sbin/getty", "/dev/ttyS0")
-	if err := mksqfs.Start(); err != nil {
-		panic(err)
+	fmt.Println("Setting IP to 172.19.0.2/24")
+	ifce, err := netlink.LinkByName("eth0")
+	if err != nil {
+		panic(fmt.Errorf("failed to find ifce: %v", err))
 	}
 
-	if err := mksqfs.Wait(); err != nil {
-		panic(err)
+	err = netlink.LinkSetUp(ifce)
+	if err != nil {
+		panic(fmt.Errorf("failed to set ifce up: %v", err))
+	}
+
+	addr, err := netlink.ParseAddr("172.19.0.2/24")
+	if err != nil {
+		panic(fmt.Errorf("failed to make addr: %v", err))
+	}
+
+	err = netlink.AddrAdd(ifce, addr)
+	if err != nil {
+		panic(fmt.Errorf("failed to add addr: %v", err))
+	}
+
+	// Set hostname (should eventually be based on config...)
+	// Set resolv.conf
+
+	_, rteDstWorld, _ := net.ParseCIDR("0.0.0.0/0")
+	rte := &netlink.Route{
+		LinkIndex: ifce.Attrs().Index,
+		Dst:       rteDstWorld,
+		Gw:        net.ParseIP("172.19.0.1"),
+	}
+	err = netlink.RouteAdd(rte)
+	if err != nil {
+		panic(fmt.Errorf("failed to add default route: %v", err))
+	}
+
+	err = StartServer()
+	if err != nil {
+		panic(fmt.Errorf("failed to start ssh server: %v", err))
 	}
 
 	// https://landley.net/writing/rootfs-programming.html
