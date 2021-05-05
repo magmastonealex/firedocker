@@ -1,7 +1,9 @@
 Firedocker
 ===
 
-This is a tool to run Docker images as Firecracker microVMs.
+This is a tool to run Docker images as Firecracker microVMs. The end goal is to build a framework allowing you to relatively securely run untrusted multi-tenanted workloads on your own hardware.
+
+
 It's similar in spirit to something like Ignite, but differs in a few key ways:
 - Doesn't try to be a Docker-compatible.
 - Much stronger enforcement of network sandboxing - using eBPF & TC (maybe eventually XDP...), VMs are restricted to the MAC and IP they were assigned, and all other traffic is dropped before the network stack even gets a chance to process it.
