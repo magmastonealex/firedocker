@@ -1,5 +1,7 @@
 package main
 
+//go:generate mockery --name=mountHelper --structname=MountHelperMock
+
 import (
 	"firedocker/cmd/preinit/mocks"
 	"os"

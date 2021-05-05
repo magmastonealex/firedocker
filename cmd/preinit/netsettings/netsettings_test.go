@@ -1,5 +1,7 @@
 package netsettings
 
+//go:generate mockery --name=NetlinkHelper
+
 import (
 	"firedocker/cmd/preinit/netsettings/mocks"
 	"fmt"
