@@ -1,5 +1,5 @@
 // +build arm64
 
-package main
+package platformident
 
 const PlatformBuilt PlatformVariant = PlatformAArch64

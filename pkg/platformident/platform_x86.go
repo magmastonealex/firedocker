@@ -1,5 +1,5 @@
 // +build amd64
 
-package main
+package platformident
 
 const PlatformBuilt PlatformVariant = PlatformX86_64

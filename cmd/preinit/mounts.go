@@ -35,13 +35,10 @@ func mountAndPivotWithHelper(mh mountHelper) {
 	mh.MustMkdir("/realroot", 0755)
 
 	// We need /dev to access the drives...
-	var flags uintptr
-	flags = syscall.MS_STRICTATIME | syscall.MS_NOSUID | syscall.MS_NOEXEC
-	mh.MustMount("devtmpfs", "/dev", "devtmpfs", 0, "size=10M")
+	mh.MustMount("devtmpfs", "/dev", "devtmpfs", uintptr(syscall.MS_STRICTATIME|syscall.MS_NOSUID|syscall.MS_NOEXEC), "size=10M")
 
 	// Mount our rootfs & writable area.
-	flags = syscall.MS_RDONLY
-	mh.MustMount("/dev/vda", "/ro", "squashfs", flags, "")
+	mh.MustMount("/dev/vda", "/ro", "squashfs", uintptr(syscall.MS_RDONLY), "")
 	mh.MustMount("/dev/vdb", "/rw", "ext4", 0, "")
 
 	// Set up overlay...
@@ -53,40 +50,32 @@ func mountAndPivotWithHelper(mh mountHelper) {
 	mh.MustMkdir("/realroot/ro", 0777)
 	mh.MustMkdir("/realroot/rw", 0777)
 
-	flags = syscall.MS_MOVE
-	mh.MustMount("/ro", "/realroot/ro", "", flags, "")
-	flags = syscall.MS_MOVE
-	mh.MustMount("/rw", "/realroot/rw", "", flags, "")
+	mh.MustMount("/ro", "/realroot/ro", "", uintptr(syscall.MS_MOVE), "")
+	mh.MustMount("/rw", "/realroot/rw", "", uintptr(syscall.MS_MOVE), "")
 
 	mh.MustMkdir("/realroot/dev", 0777)
-	flags = syscall.MS_MOVE
-	mh.MustMount("/dev", "/realroot/dev", "", flags, "")
+	mh.MustMount("/dev", "/realroot/dev", "", uintptr(syscall.MS_MOVE), "")
 
 	// Mount a number of API filesystems that normal programs expect to already be set up.
 	// proc provides information about running processes
 	mh.MustMkdir("/realroot/proc", 0755)
-	flags = syscall.MS_NOSUID | syscall.MS_NODEV
-	mh.MustMount("proc", "/realroot/proc", "proc", flags, "")
+	mh.MustMount("proc", "/realroot/proc", "proc", uintptr(syscall.MS_NOSUID|syscall.MS_NODEV), "")
 
 	// sysfs provides all kinds of system information & kernel tuning.
 	mh.MustMkdir("/realroot/sys", 0755)
-	flags = syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC
-	mh.MustMount("sysfs", "/realroot/sys", "sysfs", flags, "")
+	mh.MustMount("sysfs", "/realroot/sys", "sysfs", uintptr(syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC), "")
 
 	// /run is a tmpdir
 	mh.MustMkdir("/realroot/run", 0755)
-	flags = syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_STRICTATIME
-	mh.MustMount("tmpfs", "/realroot/run", "tmpfs", flags, "size=20%")
+	mh.MustMount("tmpfs", "/realroot/run", "tmpfs", uintptr(syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_STRICTATIME), "size=20%")
 
 	// /tmp is a tmpdir
 	mh.MustMkdir("/realroot/tmp", 0755)
-	flags = syscall.MS_NOSUID | syscall.MS_NODEV
-	mh.MustMount("tmpfs", "/realroot/tmp", "tmpfs", flags, "size=50%")
+	mh.MustMount("tmpfs", "/realroot/tmp", "tmpfs", uintptr(syscall.MS_NOSUID|syscall.MS_NODEV), "size=50%")
 
 	// /run/shm is a tmpdir
 	mh.MustMkdir("/realroot/run/shm", 01777)
-	flags = syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC | syscall.MS_STRICTATIME
-	mh.MustMount("tmpfs", "/realroot/run/shm", "tmpfs", flags, "size=50%")
+	mh.MustMount("tmpfs", "/realroot/run/shm", "tmpfs", uintptr(syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC|syscall.MS_STRICTATIME), "size=50%")
 
 	// /sys/fs/cgroup is actually a tmpfs
 	mh.MustMkdir("/realroot/sys/fs/cgroup", 0755)
@@ -98,8 +87,7 @@ func mountAndPivotWithHelper(mh mountHelper) {
 
 	// /dev/pty has information on pseudo-ttys
 	mh.MustMkdir("/realroot/dev/pts", 0620)
-	flags = syscall.MS_NOEXEC | syscall.MS_NOSUID
-	mh.MustMount("devpts", "/realroot/dev/pts", "devpts", flags, "ptmxmode=0666,gid=5,newinstance")
+	mh.MustMount("devpts", "/realroot/dev/pts", "devpts", uintptr(syscall.MS_NOEXEC|syscall.MS_NOSUID), "ptmxmode=0666,gid=5,newinstance")
 
 	// A few symlinks are made to align with conventions
 	mh.MustSymlink("/proc/self/fd", "/realroot/dev/fd")
@@ -117,8 +105,7 @@ func mountAndPivotWithHelper(mh mountHelper) {
 	// You can do a trick where you grab a FD, switch away, then use the FD to delete itself.
 
 	// move our real root over...
-	flags = syscall.MS_MOVE
-	mh.MustMount("/realroot", "/", "", flags, "")
+	mh.MustMount("/realroot", "/", "", uintptr(syscall.MS_MOVE), "")
 
 	// and chroot into it to complete moving off of the initramfs.
 	mh.MustChroot(".")
