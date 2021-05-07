@@ -5,66 +5,49 @@ package dockersquasher
 import (
 	"firedocker/pkg/platformident"
 	"fmt"
-	"os/exec"
+	"path"
 
-	"io"
 	"os"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	containerregistry "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
-
-// HasRequiredUtilities ensures that required executables mksquashfs and tar are available.
-// The main Squash function will also perform this check - it's provided as a convienience
-// in case you want to pre-flight something.
-func HasRequiredUtilities() error {
-	_, err := exec.LookPath("tar")
-	if err != nil {
-		return fmt.Errorf("the 'tar' command is unavailable. cannot extract layers")
-	}
-	_, err = exec.LookPath("mksquashfs")
-	if err != nil {
-		return fmt.Errorf("the 'mksquashfs' command is unavailable. cannot ")
-	}
-	return nil
-}
 
 // PullAndSquash will attempt to fetch an image. By default, 'ubuntu:latest' will be fetched from index.docker.io,
 // for the platform this binary was built for, using '.' as the temporary directory to use for storage.
 // Pass SquashOptions to modify these defaults.
 // TODO: Currently, this doesn't support authentication. It should be relatively easy to add, I just haven't needed it yet.
-func PullAndSquash(configOptions ...SquashOption) (string, error) {
+func PullAndSquash(configOptions ...SquashOption) (string, *containerregistry.ConfigFile, error) {
+	return pullAndSquashWithRemote(remoteRepositoryImpl{}, tarSquasherImpl{}, configOptions...)
+}
+
+func pullAndSquashWithRemote(repo remoteRepository, tarSquash tarSquasher, configOptions ...SquashOption) (string, *containerregistry.ConfigFile, error) {
 	config := pullSquashConfig{
 		image:    "ubuntu",
 		tag:      "latest",
 		registry: "index.docker.io",
 		forplat:  platformident.PlatformBuilt,
 		tmpdir:   ".",
+		outfile:  "./img.sqfs",
 	}
 
 	for _, option := range configOptions {
 		option(&config)
 	}
 
-	err := HasRequiredUtilities()
-	if err != nil {
-		return "", fmt.Errorf("missing required utilities: %w", err)
-	}
-
 	ref, err := name.ParseReference(fmt.Sprintf("%s:%s", config.image, config.tag), name.WithDefaultRegistry(config.registry))
 	if err != nil {
-		return "", fmt.Errorf("image, tag, or registry is invalid: %w", err)
+		return "", nil, fmt.Errorf("image, tag, or registry is invalid: %w", err)
 	}
 
-	imgIndex, err := remote.Index(ref)
+	imgIndex, err := repo.Index(ref)
 	if err != nil {
-		return "", fmt.Errorf("failed to find image %s:%s @ %s : %w", config.image, config.tag, config.registry, err)
+		return "", nil, fmt.Errorf("failed to find image %s:%s @ %s : %w", config.image, config.tag, config.registry, err)
 	}
 	manifest, err := imgIndex.IndexManifest()
 	if err != nil {
-		return "", fmt.Errorf("failed to parse image manifest: %w", err)
+		return "", nil, fmt.Errorf("failed to parse image manifest: %w", err)
 	}
 
 	manifestAvailable := make(map[string]containerregistry.Hash)
@@ -98,96 +81,66 @@ func PullAndSquash(configOptions ...SquashOption) (string, error) {
 			suitableManifest = val
 		}
 	} else {
-		return "", fmt.Errorf("unknown platform type %v", config.forplat)
+		return "", nil, fmt.Errorf("unknown platform type %v", config.forplat)
 	}
 
 	if suitableManifest.Hex == "" {
-		return "", fmt.Errorf("no suitable image found - try another platform")
+		return "", nil, fmt.Errorf("no suitable image found - try another platform")
 	}
 
 	ref, err = name.ParseReference(fmt.Sprintf("%s@%s:%s", config.image, suitableManifest.Algorithm, suitableManifest.Hex), name.WithDefaultRegistry(config.registry))
 	if err != nil {
-		return "", fmt.Errorf("failed to create reference to image: %w", err)
+		return "", nil, fmt.Errorf("failed to create reference to image: %w", err)
 	}
 
-	img, err := remote.Image(ref)
+	img, err := repo.Image(ref)
 	if err != nil {
-		return "", fmt.Errorf("failed to retrieve image manifest: %w", err)
+		return "", nil, fmt.Errorf("failed to retrieve image manifest: %w", err)
 	}
 
-	imgManifest, err := img.RawManifest()
+	configFile, err := img.ConfigFile()
 	if err != nil {
-		return "", fmt.Errorf("failed to read manifest from image: %w", err)
+		return "", nil, fmt.Errorf("failed to retrieve configuration file for image %w", err)
 	}
-	panic(fmt.Errorf("Haven't finished converting the rest yet. Try again tomorrow."))
+
 	layers, err := img.Layers()
-	os.RemoveAll("workdir")
-	os.Mkdir("workdir", 0700)
+	if err != nil {
+		return "", nil, fmt.Errorf("image has no layers? %w", err)
+	}
+	workdir := path.Join(config.tmpdir, "squashwork")
+	os.RemoveAll(workdir)
+	os.Mkdir(workdir, 0700)
+	defer os.RemoveAll(workdir)
 	for _, layer := range layers {
-		mt, err := layer.MediaType()
-		if err != nil {
-			panic(err)
-		}
-		if mt != types.DockerLayer && mt != types.OCILayer {
-			panic(fmt.Errorf("unknown layer type %+v", mt))
-		}
-
 		dg, err := layer.Digest()
 		if err != nil {
-			panic(err)
+			return "", nil, fmt.Errorf("layer has no digest!? %w", err)
 		}
-		fmt.Printf("Dl: %s\n", dg.Hex)
+
+		mt, err := layer.MediaType()
+		if err != nil {
+			return "", nil, fmt.Errorf("layer %s has no media type: %w", dg.Hex, err)
+		}
+		if mt != types.DockerLayer && mt != types.OCILayer {
+			return "", nil, fmt.Errorf("unknown layer type %+v for %s", mt, dg.Hex)
+		}
 
 		rc, err := layer.Compressed()
 		if err != nil {
-			panic(err)
+			return "", nil, fmt.Errorf("failed to start download of layer %s: %w", dg.Hex, err)
 		}
+
 		// Extract this into workdir...
-		tarExtract := exec.Command("tar", "-xpzf", "-", "-C", "workdir/")
-		tarErr, _ := tarExtract.StderrPipe()
-		tarOut, _ := tarExtract.StdoutPipe()
-		tarIn, _ := tarExtract.StdinPipe()
-		err = tarExtract.Start()
-		go func() {
-			io.Copy(os.Stdout, tarOut)
-		}()
-		go func() {
-			io.Copy(os.Stderr, tarErr)
-		}()
+		err = tarSquash.Extract(rc, workdir)
 		if err != nil {
-			panic(err)
-		}
-		_, err = io.Copy(tarIn, rc)
-		if err != nil {
-			panic(err)
-		}
-		rc.Close()
-		tarIn.Close()
-		err = tarExtract.Wait()
-		if err != nil {
-			panic(err)
+			return "", nil, fmt.Errorf("tar failed to extract layer. %w", err)
 		}
 	}
 
-	mksqfs := exec.Command("mksquashfs", "workdir", fmt.Sprintf("%s_%s.sqfs", imgToPull, tagToPull))
-	mksqfsErr, _ := mksqfs.StderrPipe()
-	mksqfsOut, _ := mksqfs.StdoutPipe()
-	err = mksqfs.Start()
+	err = tarSquash.Squash(workdir, config.outfile)
 	if err != nil {
-		panic(err)
-	}
-	go func() {
-		io.Copy(os.Stdout, mksqfsOut)
-	}()
-	go func() {
-		io.Copy(os.Stderr, mksqfsErr)
-	}()
-	err = mksqfs.Wait()
-	if err != nil {
-		panic(err)
+		return "", nil, fmt.Errorf("failed to squash the rootfs. %w", err)
 	}
 
-	fmt.Printf("Here! %+v\n", img)
-
-	return "", nil
+	return config.outfile, configFile, nil
 }

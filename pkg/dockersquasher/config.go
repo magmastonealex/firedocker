@@ -8,6 +8,7 @@ type pullSquashConfig struct {
 	registry string
 	forplat  platformident.PlatformVariant
 	tmpdir   string
+	outfile  string
 }
 
 // SquashOption is a functional option for squashing images.
@@ -18,6 +19,13 @@ func WithImage(img string, tag string) SquashOption {
 	return func(config *pullSquashConfig) {
 		config.image = img
 		config.tag = tag
+	}
+}
+
+// WithOutputFile sets the filename for the squashfs image.
+func WithOutputFile(filename string) SquashOption {
+	return func(config *pullSquashConfig) {
+		config.outfile = filename
 	}
 }
 
