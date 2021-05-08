@@ -28,10 +28,15 @@ const (
 	BPF_OBJ_GET
 )
 
+const (
+	BPF_ANY = iota
+	BPF_NOEXIST
+	BPF_EXIST
+)
+
 func BPF(cmd BPFCmd, attr unsafe.Pointer, size uintptr) (uintptr, error) {
 	r1, _, errNo := unix.Syscall(unix.SYS_BPF, uintptr(cmd), uintptr(attr), size)
 	runtime.KeepAlive(attr)
-
 	var err error
 	if errNo != 0 {
 		err = errNo

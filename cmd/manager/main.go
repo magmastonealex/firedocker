@@ -1,23 +1,37 @@
 package main
 
 import (
-	"firedocker/pkg/packetfilter"
+	"firedocker/pkg/bpfmap"
 	"fmt"
 )
 
 func main() {
 
-	bpfMap, err := packetfilter.OpenMap("/sys/fs/bpf/tc/globals/ifce_allowed_ip")
+	bpfMap, err := bpfmap.OpenMap("/sys/fs/bpf/tc/globals/ifce_allowed_ip")
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("Finished!?")
 
-	val, err := bpfMap.GetValue(16)
+	err = bpfMap.DeleteValue(35)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("result was: %x", val)
+	val, err := bpfMap.GetCurrentValues()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("result was: %+v\n", val)
+
+	bpfMap.SetValue(35, 323123)
+
+	val, err = bpfMap.GetCurrentValues()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("result was: %+v\n", val)
 
 }
