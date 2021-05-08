@@ -12,6 +12,10 @@ package packetfilter
 import (
 	"firedocker/pkg/packetfilter/internal"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"strings"
+	"unsafe"
 )
 
 // BPFMap is a simplified type of BPF Map, specialized for this use case.
@@ -26,7 +30,21 @@ type BPFMap struct {
 // Be wary of concurrency with the BPF program. You can both access the space at the same time
 // safely, but the value may not be what you expect...
 func (mp *BPFMap) GetValue(key uint32) (uint64, error) {
-	return 0, nil
+
+	// the sizes of these types are of critical importance. Do not change them without reason.
+	// (that sounded worse than it is. The kernel function will take a *uint64_t and *uint32_t, and we can't safely
+	//  construct pointers that can cross the kernel boundary _and_ that respect Go's type system. This function,
+	//  and others in this package, are the boundary line between "safe" and "unsafe" code.)
+	var value uint64
+	var keyStore uint32 = key
+
+	err := internal.BPFMapLookupElem(mp.fd, internal.NewPointer(unsafe.Pointer(&keyStore)), internal.NewPointer(unsafe.Pointer(&value)))
+	if err != nil {
+		// usually ENOENT.
+		return 0, err
+	}
+
+	return value, nil
 }
 
 // SetValue will set the value for a particular key
@@ -42,7 +60,47 @@ func (mp *BPFMap) GetCurrentValues() (map[uint32]uint64, error) {
 }
 
 // ensures a map has 32 bit keys, 64 bit values using procfs.
+// There's lots of good stuff in this file, we just don't currently need much of it.
 func validateMapSizes(fd *internal.FD) error {
+	fdVal, err := fd.Value()
+	if err != nil {
+		return fmt.Errorf("can't get raw fd value: %w", err)
+	}
+	contents, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/fdinfo/%d", os.Getpid(), fdVal))
+	if err != nil {
+		return fmt.Errorf("failed to read contents of fdinfo")
+	}
+
+	kvs := strings.Split(string(contents), "\n")
+	var mapType int = -1
+	var mapValSize int = -1
+	var mapKeySize int = -1
+	for _, kv := range kvs {
+		var val int = -1
+		if read, _ := fmt.Sscanf(kv, "map_type:\t%d", &val); read == 1 {
+			mapType = val
+		} else if read, _ := fmt.Sscanf(kv, "key_size:\t%d", &val); read == 1 {
+			mapKeySize = val
+		} else if read, _ := fmt.Sscanf(kv, "value_size:\t%d", &val); read == 1 {
+			mapValSize = val
+		}
+	}
+	if mapType == -1 || mapValSize == -1 || mapKeySize == -1 {
+		return fmt.Errorf("failed to read type, valSize, keySize. something is wrong with this map")
+	}
+
+	if mapType != 1 {
+		return fmt.Errorf("currently only hashmap-type maps are supported")
+	}
+
+	if mapValSize != 8 {
+		return fmt.Errorf("currently all values must be 8 bytes")
+	}
+
+	if mapKeySize != 4 {
+		return fmt.Errorf("currently all keys must be 4 bytes")
+	}
+
 	return nil
 }
 

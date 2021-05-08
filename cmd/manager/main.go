@@ -1,17 +1,23 @@
 package main
 
 import (
-	"firedocker/pkg/dockersquasher"
+	"firedocker/pkg/packetfilter"
 	"fmt"
 )
 
 func main() {
 
-	res, cfg, err := dockersquasher.PullAndSquash(dockersquasher.WithImage("debian", "latest"))
+	bpfMap, err := packetfilter.OpenMap("/sys/fs/bpf/tc/globals/ifce_allowed_ip")
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("Resulting filename: %s\n", res)
-	fmt.Printf("entry: %+v\n", cfg.Config.Entrypoint)
+	fmt.Println("Finished!?")
+
+	val, err := bpfMap.GetValue(16)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("result was: %x", val)
 
 }

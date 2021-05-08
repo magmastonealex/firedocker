@@ -182,7 +182,7 @@ int main() {
     }
     printf("Res: %lx / %lx / %lu\n", resAddr.s_addr, ___constant_swab32(resAddr.s_addr), resAddr.s_addr);
 
-    __u32 ipVal = resAddr.s_addr;// 172.19.0.2
+    __u64 ipVal = ((__u64)resAddr.s_addr);// 172.19.0.2
     rc = sc_bpf_update_elem(bpfFd2, &key, &ipVal, BPF_ANY);
     if (rc != 0) {
         printf("Failed to set element in IP map %s\n", strerror(errno));
@@ -194,12 +194,12 @@ int main() {
     rc = sc_bpf_get_next_key(bpfFd2, &key, &nextKey);
     key = nextKey;
     while (rc == 0) {
-        __u32 val = 0;
+        __u64 val = 0;
         int ret = sc_bpf_lookup_elem(bpfFd2, &key, &val);
         if (ret != 0) {
             printf("Failed to look up an element from GET_NEXT_KEY... concurrency gremlins... %s\n", strerror(errno));
         }
-        printf("\t%lu: %lx/%ld\n", key, val, val);
+        printf("\t%lu: %llx/%llu\n", key, val, val);
         rc = sc_bpf_get_next_key(bpfFd2, &key, &nextKey);
         if (rc != 0) {
             break;
