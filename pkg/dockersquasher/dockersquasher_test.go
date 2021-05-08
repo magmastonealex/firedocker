@@ -7,6 +7,7 @@ package dockersquasher
 import (
 	"bytes"
 	"firedocker/pkg/dockersquasher/mocks"
+	"firedocker/pkg/platformident"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -228,6 +229,7 @@ func TestNormalCase(t *testing.T) {
 	require.Nil(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, out, "/fake/file.squash")
+	require.Equal(t, cfg, fakeImg.config)
 
 	require.Equal(t, extractOrder, []string{"layerIs:layer1", "layerIs:layer2", "layerIs:layer3", "layerIs:layer4"})
 
@@ -235,7 +237,90 @@ func TestNormalCase(t *testing.T) {
 }
 
 func TestHandlesDifferentPlatform(t *testing.T) {
+	remoteHelper := new(mocks.RemoteRepository)
+	tarSquasher := new(mocks.TarSquasher)
 
+	fakeIdx := &fakeIndex{
+		manifest: &containerregistry.IndexManifest{
+			Manifests: []containerregistry.Descriptor{
+				containerregistry.Descriptor{
+					Platform: &containerregistry.Platform{
+						OS:           "linux",
+						Architecture: "amd64",
+					},
+					Digest: containerregistry.Hash{
+						Hex:       "98ea6e4f216f2fb4b69fff9b3a44842c38686ca685f3f55dc48c5d3fb1107be4",
+						Algorithm: "sha256",
+					},
+				},
+				containerregistry.Descriptor{
+					Platform: &containerregistry.Platform{
+						OS:           "linux",
+						Architecture: "arm64",
+						Variant:      "v8",
+					},
+					Digest: containerregistry.Hash{
+						Hex:       "98eeeeeeeeef2fb4b69fff9b3a44842c38686ca685f3f55dc48c5d3fb1107be4",
+						Algorithm: "sha256",
+					},
+				},
+			},
+		},
+	}
+
+	fakeImg := &fakeImage{
+		layers: []containerregistry.Layer{
+			&fakeLayer{
+				id: "layer1",
+			},
+			&fakeLayer{
+				id: "layer2",
+			},
+			&fakeLayer{
+				id: "layer3",
+			},
+			&fakeLayer{
+				id: "layer4",
+			},
+		},
+		config: &containerregistry.ConfigFile{
+			Author: "fake author",
+		},
+	}
+
+	remoteHelper.On("Index", mock.MatchedBy(func(ref name.Reference) bool {
+		refReal, _ := name.ParseReference("arch:latest", name.WithDefaultRegistry("index.docker.io"))
+		return ref.Context() == refReal.Context() && ref.Identifier() == refReal.Identifier() && ref.Name() == refReal.Name()
+	})).Return(fakeIdx, nil)
+
+	remoteHelper.On("Image", mock.MatchedBy(func(ref name.Reference) bool {
+		refReal, _ := name.ParseReference("arch@sha256:98eeeeeeeeef2fb4b69fff9b3a44842c38686ca685f3f55dc48c5d3fb1107be4", name.WithDefaultRegistry("index.docker.io"))
+		return ref.Context() == refReal.Context() && ref.Identifier() == refReal.Identifier() && ref.Name() == refReal.Name()
+	})).Return(fakeImg, nil)
+
+	var extractOrder []string
+	matcherLayer := func(rc io.ReadCloser) bool {
+		res, _ := ioutil.ReadAll(rc)
+		isLayer := strings.HasPrefix(string(res), "layerIs")
+		if !isLayer {
+			return false
+		}
+		extractOrder = append(extractOrder, string(res))
+		return true
+	}
+	tarSquasher.On("Extract", mock.MatchedBy(matcherLayer), "squashwork").Return(nil)
+	tarSquasher.On("Squash", "squashwork", "/fake/file.squash").Return(nil)
+
+	out, cfg, err := pullAndSquashWithRemote(remoteHelper, tarSquasher, WithImage("arch", "latest"), WithOutputFile("/fake/file.squash"), WithPlatform(platformident.PlatformAArch64))
+
+	require.Nil(t, err)
+	require.NotNil(t, cfg)
+	require.Equal(t, out, "/fake/file.squash")
+	require.Equal(t, cfg, fakeImg.config)
+
+	require.Equal(t, extractOrder, []string{"layerIs:layer1", "layerIs:layer2", "layerIs:layer3", "layerIs:layer4"})
+
+	remoteHelper.AssertExpectations(t)
 }
 
 func TestHandlesArmFallbacks(t *testing.T) {

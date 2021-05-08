@@ -81,7 +81,7 @@ struct bpf_elf_map ifce_allowed_macs __section("maps") = {
 struct bpf_elf_map ifce_allowed_ip __section("maps") = {
         .type           = BPF_MAP_TYPE_HASH,
         .size_key       = sizeof(__u32), // ifindex
-        .size_value     = sizeof(__u32), // an ipv4 addr
+        .size_value     = sizeof(__u64), // an ipv4 addr in lower 32 bits, upper is ignored (done for simplicity in the Go companion app.)
         .pinning        = PIN_GLOBAL_NS,
         .max_elem       = 2,
 };
@@ -103,7 +103,8 @@ int tc_ingress(struct __sk_buff *skb)
 {
         __u32 ifindex = skb->ifindex;
         __u64 *allowedmac;
-        __u32 *allowedip;
+        __u64 *allowedip64;
+        __u32 allowedip;
         allowedmac = map_lookup_elem(&ifce_allowed_macs, &ifindex);
         if (!allowedmac) {
                 // We were attached to an interface but this interface isn't represented in the map.
@@ -112,10 +113,11 @@ int tc_ingress(struct __sk_buff *skb)
                 return TC_ACT_SHOT;
         }
 
-        allowedip = map_lookup_elem(&ifce_allowed_ip, &ifindex);
-        if (!allowedip) {
+        allowedip64 = map_lookup_elem(&ifce_allowed_ip, &ifindex);
+        if (!allowedip64) {
                 return TC_ACT_SHOT;
         }
+        allowedip = (__u32)(((__u64)0x00000000FFFFFFFF) & (*allowedip64));
 
         void *data = (void *)(long)skb->data;
 	void *data_end = (void *)(long)skb->data_end;
@@ -147,7 +149,7 @@ int tc_ingress(struct __sk_buff *skb)
                         return TC_ACT_SHOT;
                 }
                 struct iphdr *ip   = (data + sizeof(struct ethhdr));
-                if (*allowedip == ip->saddr) {
+                if (allowedip == ip->saddr) {
                         return TC_ACT_OK;
                 }
         } else if (ether->h_proto == htons(0x0806)) {
@@ -193,7 +195,7 @@ int tc_ingress(struct __sk_buff *skb)
                         ((__u32)arp->ar_spa[1]) << 8 |
                         ((__u32)arp->ar_spa[0]) << 0;
                 
-                if ((*allowedmac == shaAs64) && (*allowedip == spaAs32)) {
+                if ((*allowedmac == shaAs64) && (allowedip == spaAs32)) {
                         return TC_ACT_OK;
                 }
         }
