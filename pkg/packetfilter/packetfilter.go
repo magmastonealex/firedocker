@@ -9,7 +9,12 @@
 package packetfilter
 
 import (
+	"bufio"
 	"firedocker/pkg/bpfmap"
+	"fmt"
+	"io/ioutil"
+	"net"
+	"os"
 
 	"github.com/vishvananda/netlink"
 )
@@ -21,9 +26,9 @@ import (
 // You may update the device after moving to accept a different IP/MAC assuming you kept track of it's interface index.
 type PacketWhitelister interface {
 	// Install will set up whitelisting on the provided interface.
-	Install(idx uint32, ip string, mac string) error
+	Install(int uint32, ip string, mac string) error
 	// UpdateByIndex will update the whitelist for a particular interface index
-	UpdateByIndex(idx uint32, ip string, mac string) error
+	UpdateByIndex(int uint32, ip string, mac string) error
 }
 
 type netlinkHelper interface {
@@ -72,15 +77,81 @@ func (dp *DefaultPacketWhitelister) initialize() error {
 }
 
 // Install implements PacketWhitelister.Install
-func (dp *DefaultPacketWhitelister) Install(idx uint32, ip string, mac string) error {
+func (dp *DefaultPacketWhitelister) Install(idx int, ip string, mac string) error {
 	if err := dp.initialize(); err != nil {
 		return err
 	}
 
-	return nil
+	lnk, err := dp.nlHelper.LinkByIndex(idx)
+	if err != nil {
+		return fmt.Errorf("unknown link with index %d: %w", idx, err)
+	}
+	linkName := lnk.Attrs().Name
+
+	file, err := ioutil.TempFile("", "firedocker_filter")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file %w", err)
+	}
+	defer os.Remove(file.Name())
+	defer file.Close()
+
+	w := bufio.NewWriter(file)
+	_, err = w.Write(bpfFilterContents)
+	if err != nil {
+		return fmt.Errorf("failed to write filter data: %w", err)
+	}
+	err = w.Flush()
+	if err != nil {
+		return fmt.Errorf("failed to write filter data: %w", err)
+	}
+	file.Close()
+
+	err = dp.tcHelper.EnsureQdiscClsact(linkName)
+	if err != nil {
+		return fmt.Errorf("failed to set up clsact qdisc: %w", err)
+	}
+
+	err = dp.tcHelper.LoadBPFIngress(linkName, file.Name())
+	if err != nil {
+		return fmt.Errorf("failed to insert filter: %w", err)
+	}
+
+	return dp.UpdateByIndex(idx, ip, mac)
 }
 
 // UpdateByIndex implements PacketWhitelister.UpdateByIndex
-func (dp *DefaultPacketWhitelister) UpdateByIndex(idx uint32, ip string, mac string) error {
+func (dp *DefaultPacketWhitelister) UpdateByIndex(idx int, ip string, mac string) error {
+	// start by converting IP and MAC into uint64s suitable for setting in the map.
+	ipParsed := net.ParseIP(ip).To4()
+	if ipParsed == nil {
+		return fmt.Errorf("ip %s is not valid", ip)
+	}
+
+	macParsed, err := net.ParseMAC(mac)
+	if err != nil {
+		return fmt.Errorf("could not parse MAC %s. %w", mac, err)
+	}
+	if len(macParsed) != 6 {
+		return fmt.Errorf("%s is not an Ethernet MAC", mac)
+	}
+
+	var macUint uint64 = 0 | uint64(macParsed[0])<<40 |
+		uint64(macParsed[1])<<32 |
+		uint64(macParsed[2])<<24 |
+		uint64(macParsed[3])<<16 |
+		uint64(macParsed[4])<<8 |
+		uint64(macParsed[5])<<0
+
+	var ipUint uint64 = 0 | uint64(ipParsed[3])<<24 |
+		uint64(ipParsed[2])<<16 |
+		uint64(ipParsed[1])<<8 |
+		uint64(ipParsed[0])<<0
+
+	//var ipUint uint64 = ipParsed[]
+	fmt.Printf("done: %x, %x", macUint, ipUint)
+	// Open a handle to the BPF map for index -> IP
+	// Set our entry.
+	// Open a handle to the BPF map for index -> MAC
+	// Set our entry
 	return nil
 }
