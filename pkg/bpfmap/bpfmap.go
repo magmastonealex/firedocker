@@ -25,6 +25,8 @@ type BPFMap interface {
 	SetValue(key uint32, value uint64) error
 	// GetCurrentValues will produce a map of keys to values representing the current state of the Map.
 	GetCurrentValues() (map[uint32]uint64, error)
+	// Close the FD this map refers to. All future calls will fail.
+	Close() error
 }
 
 // BPFMap is a simplified type of BPF Map, specialized for this use case.
@@ -110,6 +112,11 @@ func (mp *bpfMap) GetCurrentValues() (map[uint32]uint64, error) {
 	}
 
 	return outMap, nil
+}
+
+// Close will close the underlying FD from bpfMap.
+func (mp *bpfMap) Close() error {
+	return mp.fd.Close()
 }
 
 // ensures a map has 32 bit keys, 64 bit values using procfs.
