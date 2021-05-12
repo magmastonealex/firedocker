@@ -6,6 +6,12 @@
 // Filtering is implemented using TC eBPF. The eBPF program expects a map defined for allowed IPs and allowed MACs per ifindex.
 // Helper functions are provided to install the eBPF filter, remove the eBPF filter, and add and remove entries
 // for IP and MAC whitelisting.
+// WARNING: This is not a replacement for a firewall. It's intended to deal with malicious behavior that can happen below
+// where something like iptables can handle it. All it does is ensure all packets coming FROM a VM:
+//   - are from the MAC assigned to the VM
+//   - have a source IP of the VM
+//   - Are IPv4 or ARP
+//   - ARP packets coming from the VM aren't attempting to poison caches or otherwise cause malaise.
 package packetfilter
 
 import (
@@ -41,11 +47,13 @@ type tcHelper interface {
 	LoadBPFIngress(ifce string, path string) error
 }
 
+type bpfOpener func(pinName string) (bpfmap.BPFMap, error)
+
 // DefaultPacketWhitelister implements packet whitelisting using TC & eBPF.
 type DefaultPacketWhitelister struct {
 	nlHelper  netlinkHelper
 	tcHelper  tcHelper
-	bpfOpener func(pinName string) (bpfmap.BPFMap, error)
+	bpfOpener bpfOpener
 }
 
 // helper function to initialize a netlink handle if one is not already set up.
@@ -121,6 +129,10 @@ func (dp *DefaultPacketWhitelister) Install(idx int, ip string, mac string) erro
 
 // UpdateByIndex implements PacketWhitelister.UpdateByIndex
 func (dp *DefaultPacketWhitelister) UpdateByIndex(idx int, ip string, mac string) error {
+	if err := dp.initialize(); err != nil {
+		return err
+	}
+
 	// start by converting IP and MAC into uint64s suitable for setting in the map.
 	ipParsed := net.ParseIP(ip).To4()
 	if ipParsed == nil {
@@ -147,11 +159,25 @@ func (dp *DefaultPacketWhitelister) UpdateByIndex(idx int, ip string, mac string
 		uint64(ipParsed[1])<<8 |
 		uint64(ipParsed[0])<<0
 
-	//var ipUint uint64 = ipParsed[]
-	fmt.Printf("done: %x, %x", macUint, ipUint)
-	// Open a handle to the BPF map for index -> IP
-	// Set our entry.
-	// Open a handle to the BPF map for index -> MAC
-	// Set our entry
+	ipMap, err := dp.bpfOpener("/sys/fs/bpf/tc/globals/ifce_allowed_ip")
+	if err != nil {
+		return fmt.Errorf("failed to open ip map: %w", err)
+	}
+	defer ipMap.Close()
+	err = ipMap.SetValue(uint32(idx), ipUint)
+	if err != nil {
+		return fmt.Errorf("failed to set IP value in map: %w", err)
+	}
+
+	macMap, err := dp.bpfOpener("/sys/fs/bpf/tc/globals/ifce_allowed_macs")
+	if err != nil {
+		return fmt.Errorf("failed to open mac map: %w", err)
+	}
+	defer macMap.Close()
+	err = macMap.SetValue(uint32(idx), macUint)
+	if err != nil {
+		return fmt.Errorf("failed to set mac in map: %w", err)
+	}
+
 	return nil
 }

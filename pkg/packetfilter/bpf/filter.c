@@ -48,7 +48,7 @@ struct bpf_elf_map ifce_allowed_macs __section("maps") = {
         .size_key       = sizeof(__u32), // ifindex
         .size_value     = sizeof(__u64),
         .pinning        = PIN_GLOBAL_NS,
-        .max_elem       = 2,
+        .max_elem       = 100,
 };
 
 struct bpf_elf_map ifce_allowed_ip __section("maps") = {
@@ -56,7 +56,7 @@ struct bpf_elf_map ifce_allowed_ip __section("maps") = {
         .size_key       = sizeof(__u32), // ifindex
         .size_value     = sizeof(__u64), // an ipv4 addr in lower 32 bits, upper is ignored (done for simplicity in the Go companion app.)
         .pinning        = PIN_GLOBAL_NS,
-        .max_elem       = 2,
+        .max_elem       = 100,
 };
 
 // Technically, ARP is variable-length since you can run it over anything, not just IPv4 over Ethernet.
