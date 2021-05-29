@@ -9,6 +9,7 @@ require (
 	github.com/stretchr/testify v1.6.1
 	github.com/vektra/mockery/v2 v2.7.5 // indirect
 	github.com/vishvananda/netlink v1.1.0
+	github.com/vishvananda/netns v0.0.0-20210104183010-2eb08e3e575f // indirect
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
 	golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f
 )
