@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRandomMac(t *testing.T) {
+	res, err := getRandomMac()
+	require.Nil(t, err)
+
+	require.Equal(t, len(res), 6)
+	require.Equal(t, res[0]&0x02, uint8(0x02)) // Locally administered?
+	require.Equal(t, res[0]&0x01, uint8(0x00)) // Unicast address?
+}
+
 func TestNextIP(t *testing.T) {
 	_, network, err := net.ParseCIDR("192.168.0.0/24")
 	require.Nil(t, err)

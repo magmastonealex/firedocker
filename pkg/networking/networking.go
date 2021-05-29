@@ -5,9 +5,16 @@
 // To finish things off, you likely want IPTables rules protecting the main netns -
 // ensuring that the "VM" subnet is only coming from the veth pair, not any other device.
 // Internet routing/NAT may be useful to you as well...
+//
+// WARNING: Here be dragons. This is my first pass implementing this. There are few unit tests,
+// and the overall organization of this code is a disaster.
+// I'm leaving it as-is for now so that I can prove out more of the architecture, but I do want to come back
+// and fix the sins in here.
+//
 package networking
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -34,6 +41,9 @@ const netNSName string = "firedockerguests"
 type bridgingNetManager struct {
 	mainNamespace *netlink.Handle
 	subNamespace  *netlink.Handle
+
+	subNetnsFd  netns.NsHandle
+	mainNetnsFd netns.NsHandle
 
 	vmSubnet     string
 	vmRouterAddr string
@@ -75,6 +85,17 @@ func getNextIP(network *net.IPNet, current net.IP) (net.IP, error) {
 	return ip, nil
 }
 
+func getRandomMac() (net.HardwareAddr, error) {
+	macBuf := make([]byte, 6)
+	_, err := rand.Read(macBuf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get random for MAC: %w", err)
+	}
+
+	macBuf[0] = (macBuf[0] | 2) & 0xfe // Set local bit, ensure unicast address
+	return macBuf, nil
+}
+
 func getNetNs() (netns.NsHandle, error) {
 	// First try to get a reference to the netns.
 	// If we _succeed_, then we need to clear everything out of it. There was some stale state left behind.
@@ -91,14 +112,14 @@ func getNetNs() (netns.NsHandle, error) {
 		// Deleting the veth inside the netns will also remove the one attached to the host.
 		links, err := nlHandle.LinkList()
 		if err != nil {
-			return netns.None(), fmt.Errorf("netns clearing failed - could not list links %w", links)
+			return netns.None(), fmt.Errorf("netns clearing failed - could not list links %w", err)
 		}
 
 		for _, link := range links {
-			err := nlHandle.LinkDel(link)
-			if err != nil {
-				return netns.None(), fmt.Errorf("netns clearing failed - could not delete link %s %w", link.Attrs().Name, err)
-			}
+			// this can fail if it's a physical interface (fine)
+			// or if it's a veth pair where the other side has already been deleted (fine)
+			// So ignore errors.
+			nlHandle.LinkDel(link)
 		}
 
 		nlHandle.Delete()
@@ -123,16 +144,7 @@ func getNetNs() (netns.NsHandle, error) {
 	return handle, nil
 }
 
-// InitializeBridgingNetworkManager will initialize a NetworkManager
-// which creates a bridge in a secondary network namespace.
-// vmSubnet is used to provide addresses to VMs.
-// managementSubnet is used to provide a route to the VM subnet. It should probably be a /31.
-// A route will be set up for `vmSubnet` via the management veth pair.
-// You should not be attempting to share IP space. The manager will have complete control over these
-// two subnets.
-// This is a very opinionated NetworkManager. It's possible you have a need to perform all this initialization work
-// _outside_ of firedocker. Another type of NetworkManager may be a better fit.
-func InitializeBridgingNetworkManager(vmSubnet string, managementSubnet string) (NetworkManager, error) {
+func parseBridgingIps(vmSubnet string, managementSubnet string) (*bridgingNetManager, error) {
 	_, vmNet, err := net.ParseCIDR(vmSubnet)
 	if err != nil {
 		return nil, fmt.Errorf("bad VM subnet %s %w", vmSubnet, err)
@@ -158,10 +170,16 @@ func InitializeBridgingNetworkManager(vmSubnet string, managementSubnet string) 
 	}
 
 	// We know we've got valid networks. Pull out our addresses.
-	hostSideAddr, err := getNextIP(manageNet, manageNet.IP)
-	if err != nil {
-		return nil, fmt.Errorf("management subnet was too small %s %w", managementSubnet, err)
+	var hostSideAddr net.IP
+	if ones == 31 {
+		hostSideAddr = manageNet.IP
+	} else {
+		hostSideAddr, err = getNextIP(manageNet, manageNet.IP)
+		if err != nil {
+			return nil, fmt.Errorf("management subnet was too small %s %w", managementSubnet, err)
+		}
 	}
+
 	guestSideAddr, err := getNextIP(manageNet, hostSideAddr)
 	if err != nil {
 		return nil, fmt.Errorf("management subnet was too small %s %w", managementSubnet, err)
@@ -170,6 +188,163 @@ func InitializeBridgingNetworkManager(vmSubnet string, managementSubnet string) 
 	vmRouterAddr, err := getNextIP(vmNet, vmNet.IP)
 	if err != nil {
 		return nil, fmt.Errorf("VM subnet too small %s %w", vmSubnet, err)
+	}
+
+	return &bridgingNetManager{
+		vmSubnet:     vmSubnet,
+		vmRouterAddr: vmRouterAddr.String(),
+
+		managementSubnet: managementSubnet,
+		hostSideAddr:     hostSideAddr.String(),
+		guestSideAddr:    guestSideAddr.String(),
+	}, nil
+}
+
+func setInterfaceUpWithAddr(handle *netlink.Handle, link string, network string, ip string) error {
+	ifce, err := handle.LinkByName(link)
+	if err != nil {
+		return fmt.Errorf("could not find link in main namespace: %w", err)
+	}
+	// We can now manipulate hostIfce from the main namespace.
+	err = handle.LinkSetUp(ifce)
+	if err != nil {
+		return fmt.Errorf("could not set link up %w", err)
+	}
+
+	_, mgmtNet, err := net.ParseCIDR(network)
+	if err != nil {
+		return fmt.Errorf("could not parse network: %w", err)
+	}
+	mgmtNet.IP = net.ParseIP(ip)
+	if mgmtNet.IP == nil {
+		return fmt.Errorf("could not parse ip")
+	}
+
+	err = handle.AddrAdd(ifce, &netlink.Addr{IPNet: mgmtNet})
+	if err != nil {
+		return fmt.Errorf("could not add address to interface: %w", err)
+	}
+	return nil
+}
+
+func setupRoutes(bnm *bridgingNetManager) error {
+	_, vmNet, err := net.ParseCIDR(bnm.vmSubnet)
+	if err != nil {
+		return fmt.Errorf("failed to parse vm subnet: %w", err)
+	}
+	_, worldNet, _ := net.ParseCIDR("0.0.0.0/0")
+	guestAddr := net.ParseIP(bnm.guestSideAddr)
+	if guestAddr == nil {
+		return fmt.Errorf("failed to parse guest addr")
+	}
+	hostAddr := net.ParseIP(bnm.hostSideAddr)
+	if hostAddr == nil {
+		return fmt.Errorf("failed to parse host addr")
+	}
+
+	err = bnm.mainNamespace.RouteAdd(&netlink.Route{
+		Dst: vmNet,
+		Gw:  guestAddr,
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to add route to VM subnet: %w", err)
+	}
+
+	err = bnm.subNamespace.RouteAdd(&netlink.Route{
+		Dst: worldNet,
+		Gw:  hostAddr,
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to add route to VM subnet: %w", err)
+	}
+	return nil
+}
+
+func setupInterfaces(bnm *bridgingNetManager) error {
+	vethHostMac, err := getRandomMac()
+	if err != nil {
+		return fmt.Errorf("could not generate mac: %w", err)
+	}
+	vethGuestMac, err := getRandomMac()
+	if err != nil {
+		return fmt.Errorf("could not generate mac: %w", err)
+	}
+
+	err = bnm.subNamespace.LinkAdd(&netlink.Veth{
+		LinkAttrs: netlink.LinkAttrs{
+			HardwareAddr: vethHostMac,
+			Name:         "fdhost0",
+		},
+		PeerName:         "fdguest0",
+		PeerHardwareAddr: vethGuestMac,
+	})
+	if err != nil {
+		return fmt.Errorf("could not create veth device: %w", err)
+	}
+
+	// We're going to move this device into the host namespace...
+	hostIfce, err := bnm.subNamespace.LinkByName("fdhost0")
+	if err != nil {
+		return fmt.Errorf("could not find created ifce: %w", err)
+	}
+	bnm.subNamespace.LinkSetNsFd(hostIfce, int(bnm.mainNetnsFd))
+
+	// ... and then try to fetch it on the other side!
+	err = setInterfaceUpWithAddr(bnm.mainNamespace, "fdhost0", bnm.managementSubnet, bnm.hostSideAddr)
+	if err != nil {
+		return fmt.Errorf("could not set host interface address: %w", err)
+	}
+	err = setInterfaceUpWithAddr(bnm.subNamespace, "fdguest0", bnm.managementSubnet, bnm.guestSideAddr)
+	if err != nil {
+		return fmt.Errorf("could not set guest interface address: %w", err)
+	}
+
+	// Create our main vm bridge.
+	bridgeMac, err := getRandomMac()
+	if err != nil {
+		return fmt.Errorf("could not get MAC for bridge: %w", err)
+	}
+
+	err = bnm.subNamespace.LinkAdd(&netlink.Bridge{
+		LinkAttrs: netlink.LinkAttrs{
+			HardwareAddr: bridgeMac,
+			Name:         "vmbridge",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("could not create bridge device: %w", err)
+	}
+
+	err = setInterfaceUpWithAddr(bnm.subNamespace, "vmbridge", bnm.vmSubnet, bnm.vmRouterAddr)
+	if err != nil {
+		return fmt.Errorf("could not set bridge address: %w", err)
+	}
+
+	return nil
+}
+
+// InitializeBridgingNetworkManager will initialize a NetworkManager
+// which creates a bridge in a secondary network namespace.
+// vmSubnet is used to provide addresses to VMs.
+// managementSubnet is used to provide a route to the VM subnet. It should probably be a /31.
+// A route will be set up for `vmSubnet` via the management veth pair.
+// You should not be attempting to share IP space. The manager will have complete control over these
+// two subnets.
+// This is a very opinionated NetworkManager. It's possible you have a need to perform all this initialization work
+// _outside_ of firedocker. Another type of NetworkManager may be a better fit.
+func InitializeBridgingNetworkManager(vmSubnet string, managementSubnet string) (NetworkManager, error) {
+
+	// Initialization of this is _complicated_!
+	// I don't really like the flow here, and testing it is a huge pain.
+	// I need to figure out a better way to handle this.
+	bnm, err := parseBridgingIps(vmSubnet, managementSubnet)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse IPs: %w", err)
+	}
+
+	currentNsHandle, err := netns.Get()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current network namespace: %w", err)
 	}
 
 	nsHandle, err := getNetNs()
@@ -187,17 +362,22 @@ func InitializeBridgingNetworkManager(vmSubnet string, managementSubnet string) 
 		return nil, fmt.Errorf("could not open handle for current netns: %w", err)
 	}
 
-	return &bridgingNetManager{
-		mainNamespace: thisNlHandle,
-		subNamespace:  guestNlHandle,
+	bnm.mainNetnsFd = currentNsHandle
+	bnm.subNetnsFd = nsHandle
+	bnm.mainNamespace = thisNlHandle
+	bnm.subNamespace = guestNlHandle
 
-		vmSubnet:     vmSubnet,
-		vmRouterAddr: vmRouterAddr.String(),
+	err = setupInterfaces(bnm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup interfaces: %w", err)
+	}
 
-		managementSubnet: managementSubnet,
-		hostSideAddr:     hostSideAddr.String(),
-		guestSideAddr:    guestSideAddr.String(),
-	}, nil
+	err = setupRoutes(bnm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup interfaces: %w", err)
+	}
+
+	return bnm, nil
 }
 
 // TAPInterface describes a TAP device, as well as it's MAC & IP assignment

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"firedocker/pkg/packetfilter"
+	"firedocker/pkg/networking"
 )
 
 func main() {
@@ -33,6 +33,8 @@ func main() {
 
 		fmt.Printf("result was: %+v\n", val)
 	*/
-	wl := packetfilter.DefaultPacketWhitelister{}
-	wl.UpdateByIndex(3, "172.19.0.2", "aa:bb:cc:dd:ee:ff")
+	_, err := networking.InitializeBridgingNetworkManager("192.168.3.0/24", "10.121.43.8/31")
+	if err != nil {
+		panic(err)
+	}
 }
