@@ -8,6 +8,7 @@ import (
 	"net"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // NetlinkHelper is any structure that can handle manipulating interfaces using Netlink types
@@ -37,7 +38,7 @@ type NetConfig struct {
 
 // ApplyNetConfig will remove all routes & IPs from ifaceName before applying the configuration in the supplied config struct.
 func ApplyNetConfig(ifaceName string, config NetConfig) error {
-	handle, err := netlink.NewHandle()
+	handle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
 	if err != nil {
 		return fmt.Errorf("failed to make netlink handle: %v", err)
 	}

@@ -1,13 +1,13 @@
 package main
 
 import (
-	"firedocker/pkg/bpfmap"
+	"firedocker/pkg/dockersquasher"
 	"firedocker/pkg/networking"
 	"fmt"
 )
 
 func main() {
-	bnm, err := networking.InitializeBridgingNetworkManager("192.168.3.0/24")
+	bnm, err := networking.InitializeBridgingNetworkManager("172.19.0.0/24")
 	if err != nil {
 		panic(err)
 	}
@@ -24,17 +24,11 @@ func main() {
 	fmt.Printf("TAP1: name: %s idx: %d IP: %s MAC %s\n", tapIf1.Name(), tapIf1.Idx(), tapIf1.IP().String(), tapIf1.MAC())
 	fmt.Printf("TAP2: name: %s idx: %d IP: %s MAC %s\n", tapIf2.Name(), tapIf2.Idx(), tapIf2.IP().String(), tapIf2.MAC())
 
-	bpfMap, err := bpfmap.OpenMap("/sys/fs/bpf/tc/globals/ifce_allowed_ip")
+	outfile, cfg, err := dockersquasher.PullAndSquash(dockersquasher.WithOutputFile("rootfs.sqs"), dockersquasher.WithTempDirectory("tmp"), dockersquasher.WithImage("ubuntu", "latest"))
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("Finished!?")
-
-	val, err := bpfMap.GetCurrentValues()
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("result was: %+v\n", val)
+	fmt.Printf("Configuration: %+v\n", cfg)
+	fmt.Printf("rootfs in %s\n", outfile)
 
 }
