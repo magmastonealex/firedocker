@@ -29,7 +29,20 @@ func (tc *tcHelperImpl) ensureQdiscClsact(ifce string, execTc execTcHelper) erro
 	if strings.Contains(res, "clsact") {
 		// clsact already in place!
 		return nil
-	} else if strings.Contains(res, "noqueue") {
+	} else if strings.Contains(res, "fq_codel") {
+		// some TAP devices get created with fq_codel for reasons beyond me.
+		// Replace it with a noqeueu
+		//tc qdisc replace dev tap1 root noqueue
+		_, err := execTc("qdisc", "replace", "dev", ifce, "root", "noqueue")
+		if err != nil {
+			return fmt.Errorf("failed to remove qdisc? %w", err)
+		}
+		res, err = execTc("qdisc", "show", "dev", ifce)
+		if err != nil {
+			return fmt.Errorf("failed to check qdisc status - interface nonexistant? %w", err)
+		}
+	}
+	if strings.Contains(res, "noqueue") {
 		_, err = execTc("qdisc", "add", "dev", ifce, "clsact")
 		if err != nil {
 			return fmt.Errorf("failed to add clsact classifier to %s: %w", ifce, err)
@@ -37,7 +50,7 @@ func (tc *tcHelperImpl) ensureQdiscClsact(ifce string, execTc execTcHelper) erro
 		return nil
 	}
 
-	return fmt.Errorf("interface %s already has queueing configured. Cannot add clsact classifier", ifce)
+	return fmt.Errorf("interface %s already has novel queuing configured. Cannot add clsact classifier", ifce)
 }
 
 func (tc *tcHelperImpl) LoadBPFIngress(ifce string, path string) error {

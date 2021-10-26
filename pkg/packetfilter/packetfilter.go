@@ -32,9 +32,9 @@ import (
 // You may update the device after moving to accept a different IP/MAC assuming you kept track of it's interface index.
 type PacketWhitelister interface {
 	// Install will set up whitelisting on the provided interface.
-	Install(int uint32, ip string, mac string) error
+	Install(idx int, ip string, mac string) error
 	// UpdateByIndex will update the whitelist for a particular interface index
-	UpdateByIndex(int uint32, ip string, mac string) error
+	UpdateByIndex(idx int, ip string, mac string) error
 }
 
 type netlinkHelper interface {
