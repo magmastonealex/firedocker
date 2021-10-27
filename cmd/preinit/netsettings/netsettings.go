@@ -104,5 +104,15 @@ func ApplyNetConfigWithHelper(ifaceName string, config NetConfig, ns NetlinkHelp
 			return fmt.Errorf("failed to add route: %v", err)
 		}
 	}
+
+	// Add route for mmds
+	_, mmdsNet, _ := net.ParseCIDR("169.254.169.254/32")
+	err = ns.RouteAdd(&netlink.Route{
+		LinkIndex: ifce.Attrs().Index,
+		Dst:       mmdsNet,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to add mmds route")
+	}
 	return nil
 }

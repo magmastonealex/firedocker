@@ -6,6 +6,7 @@ require (
 	github.com/creack/pty v1.1.10
 	github.com/docker/libcontainer v2.2.1+incompatible // indirect
 	github.com/google/go-containerregistry v0.5.0
+	github.com/google/uuid v1.3.0 // indirect
 	github.com/stretchr/testify v1.6.1
 	github.com/vektra/mockery/v2 v2.8.0 // indirect
 	github.com/vishvananda/netlink v1.1.0

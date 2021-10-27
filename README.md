@@ -23,7 +23,7 @@ Big TODOs:
 - ~~Docker image squashing into squashfs img as indepedent tested package~~
 - ~~eBPF isolation implemented in it's own tested package~~
 - ~~Basic init implemented as it's own binary~~ - still need to implement config retrieval & reaping. Dependent on config interfaces.
-- Building package to handle setting up network bridge, TAP devices in netns (in-progress)
+- ~Building package to handle setting up network bridge, TAP devices in netns~
 - Simple VM booting from the manager.
 - VSock interface allowing communication between manager and various init processes.
 - Init accepts a configuration & can start the main process and optionally an SSH server.
