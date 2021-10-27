@@ -14,8 +14,13 @@ type bnmTAPInterface struct {
 	mac     string
 	ip      net.IP
 	netmask net.IPMask
+
+	dgw net.IP
 }
 
+func (bt *bnmTAPInterface) DefaultGateway() net.IP {
+	return bt.dgw
+}
 func (bt *bnmTAPInterface) Name() string {
 	return bt.name
 }
@@ -96,5 +101,6 @@ func (bnm *bridgingNetManager) CreateTap() (TAPInterface, error) {
 		mac:     mac.String(), // for the VM to use
 		ip:      ipAddr,       // for the VM to use
 		netmask: bnm.vmSubnet.Mask,
+		dgw:     bnm.vmRouterAddr,
 	}, nil
 }

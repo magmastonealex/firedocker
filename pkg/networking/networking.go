@@ -39,6 +39,7 @@ type TAPInterface interface {
 	MAC() string
 	IP() net.IP
 	Netmask() net.IPMask
+	DefaultGateway() net.IP
 }
 
 type bridgingNetManager struct {
