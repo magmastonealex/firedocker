@@ -43,7 +43,11 @@ type vmInstance struct {
 	id       string
 	sockpath string
 
-	started bool
+	started  bool
+	finished bool
+	closed   chan struct{}
+
+	listenSock net.Listener
 
 	proc *os.Process
 }
@@ -61,8 +65,10 @@ func (m *manager) StartInstance() (VMInstance, error) {
 	instance := &vmInstance{
 		id:       vmId,
 		sockpath: fmt.Sprintf("/run/firedocker/%s/vm.sock", vmId[:10]),
+		closed:   make(chan struct{}, 1),
 	}
 	os.MkdirAll(fmt.Sprintf("/run/firedocker/%s", vmId[:10]), 0o770)
+
 	cmd := exec.Command("./firecracker", "--id", instance.id, "--api-sock", instance.sockpath)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -81,16 +87,22 @@ func (m *manager) StartInstance() (VMInstance, error) {
 		return nil, fmt.Errorf("failed to start command", err)
 	}
 	instance.proc = cmd.Process
-	//go instance.wait()
+	go instance.wait()
 
 	return instance, nil
 }
 
-func (vmi *vmInstance) Wait() {
+func (vmi *vmInstance) wait() {
 	vmi.proc.Wait()
 	vmi.proc = nil
+	vmi.finished = true
+	close(vmi.closed)
 	log.Println("VM instance exited")
 	// TODO: track this and emit events when things have stopped working.
+}
+
+func (vmi *vmInstance) Wait() {
+	<-vmi.closed
 }
 
 func (vmi *vmInstance) ID() string {
@@ -103,6 +115,7 @@ func (vmi *vmInstance) Shutdown() {
 	if vmi.proc != nil {
 		vmi.proc.Kill()
 	}
+	vmi.Wait()
 }
 
 func (vmi *vmInstance) do(req *http.Request) (*http.Response, error) {

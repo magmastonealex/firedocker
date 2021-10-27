@@ -5,6 +5,7 @@ package main
 // find . -print0 | cpio --null --create --verbose --format=newc > ../initrd.cpio
 
 import (
+	"firedocker/cmd/preinit/mmds"
 	"firedocker/cmd/preinit/netsettings"
 	"fmt"
 	"os"
@@ -19,18 +20,38 @@ func main() {
 
 	MountAndPivot()
 
-	fmt.Println("Setting IP to 172.19.0.2/24")
+	fmt.Println("Querying MMDS for IP configuration")
+
+	// Apply an early net config to talk to MMDS.
+	// Doesn't really need to be correct, we're banned from sending
+	// invalid settings via the eBPF filtering anyways.
 	err := netsettings.ApplyNetConfig("eth0", netsettings.NetConfig{
-		IPNet: "172.19.0.2/24",
-		Routes: []netsettings.RouteConfig{
-			netsettings.RouteConfig{
-				Gw:  "172.19.0.1",
-				Dst: "0.0.0.0/0",
-			},
-		},
+		IPNet: "169.254.169.3/24",
 	})
 	if err != nil {
-		panic(fmt.Errorf("failed to set up networking: %v", err))
+		panic(fmt.Errorf("failed to set initial network: %w", err))
+	}
+
+	mmdsConfig, err := mmds.FetchIPConfig()
+	if err != nil {
+		panic(fmt.Errorf("failed to retrieve IP configuration: %w", err))
+	}
+
+	routeConfig := make([]netsettings.RouteConfig, len(mmdsConfig.Routes))
+	for i, route := range mmdsConfig.Routes {
+		routeConfig[i] = netsettings.RouteConfig{
+			Gw:  route.Gw,
+			Dst: route.Network,
+		}
+	}
+
+	fmt.Printf("Setting IP to %s\n", mmdsConfig.IPCIDR)
+	err = netsettings.ApplyNetConfig("eth0", netsettings.NetConfig{
+		IPNet:  mmdsConfig.IPCIDR,
+		Routes: routeConfig,
+	})
+	if err != nil {
+		panic(fmt.Errorf("failed to set up networking: %w", err))
 	}
 
 	// We're ready to start invoking programs now.

@@ -16,6 +16,14 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	tapIf2, err := bnm.CreateTap()
+	if err != nil {
+		panic(err)
+	}
+	tapIf3, err := bnm.CreateTap()
+	if err != nil {
+		panic(err)
+	}
 
 	fmt.Printf("TAP1: name: %s idx: %d IP: %s MAC %s\n", tapIf1.Name(), tapIf1.Idx(), tapIf1.IP().String(), tapIf1.MAC())
 
@@ -39,6 +47,34 @@ func main() {
 	}); err != nil {
 		panic(err)
 	}
+
+	instance2, err := vmManager.StartInstance()
+	if err != nil {
+		panic(err)
+	}
+
+	if err := instance2.ConfigureAndStart(firecracker.Config{
+		NetworkInterface:      tapIf2,
+		RootFilesystemPath:    "./rootfs.sqs",
+		ScratchFilesystemPath: "./scratch2.ext4",
+	}); err != nil {
+		panic(err)
+	}
+
+	instance3, err := vmManager.StartInstance()
+	if err != nil {
+		panic(err)
+	}
+
+	if err := instance3.ConfigureAndStart(firecracker.Config{
+		NetworkInterface:      tapIf3,
+		RootFilesystemPath:    "./rootfs.sqs",
+		ScratchFilesystemPath: "./scratch3.ext4",
+	}); err != nil {
+		panic(err)
+	}
 	fmt.Println("Instance startup complete!")
 	instance.Wait()
+	instance2.Wait()
+	instance3.Wait()
 }
