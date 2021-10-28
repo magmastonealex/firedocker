@@ -146,6 +146,7 @@ func (vmi *vmInstance) waitForOnline() error {
 		if err != nil {
 			// expected, for a while. Thus the timeout...
 			fmt.Printf("failed connecting to FC: %+v", err)
+			continue
 		}
 		if resp.StatusCode == 200 {
 			return nil
