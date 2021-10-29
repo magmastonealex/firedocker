@@ -42,8 +42,8 @@ func mountAndPivotWithHelper(mh mountHelper) {
 	mh.MustMount("/dev/vdb", "/rw", "ext4", 0, "")
 
 	// Set up overlay...
-	mh.MustMkdir("/rw/upper", 0700)
-	mh.MustMkdir("/rw/work", 0700)
+	mh.MustMkdir("/rw/upper", 0777)
+	mh.MustMkdir("/rw/work", 0777)
 	mh.MustMount("overlay-root", "/realroot", "overlay", 0, "lowerdir=/ro,upperdir=/rw/upper,workdir=/rw/work")
 
 	// and start moving things into realroot, where we'll create our rootfs.

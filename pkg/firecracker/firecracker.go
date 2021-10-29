@@ -19,12 +19,21 @@ import (
 	"github.com/google/uuid"
 )
 
+type ContainerRuntimeConfig struct {
+	Entrypoint  []string
+	Cmd         []string
+	Environment []string
+	Workdir     string
+}
+
 type Config struct {
 	RootFilesystemPath    string
 	ScratchFilesystemPath string // TODO: Create a "StorageManager" which can handle this.
 	// TODO: we also need a "config" filesystem which the container can persist data across versions in.
 	// The existing "scratch" filesystem is linked with the root fs (but allows two containers based on same rootfs)
 	NetworkInterface networking.TAPInterface
+
+	RuntimeConfig ContainerRuntimeConfig
 }
 
 type VMInstance interface {
@@ -249,8 +258,14 @@ func (vmi *vmInstance) ConfigureAndStart(config Config) error {
 		return fmt.Errorf("failed to serialize network configuration: %w", err)
 	}
 
+	serializedRuntimeConfig, err := json.Marshal(&config.RuntimeConfig)
+	if err != nil {
+		return fmt.Errorf("failed to serialize runtime configuration: %w", err)
+	}
+
 	if err := vmi.doPut("/mmds", &mmdsInfo{
-		IPConfig: string(serializedNetwork),
+		IPConfig:      string(serializedNetwork),
+		RuntimeConfig: string(serializedRuntimeConfig),
 	}); err != nil {
 		return fmt.Errorf("failed to set MMDS config: %+w", err)
 	}

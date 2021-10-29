@@ -45,5 +45,6 @@ type mmdsIPConfig struct {
 }
 
 type mmdsInfo struct {
-	IPConfig string `json:"ipconfig"` // JSON-serialized mmdsIpConfig
+	IPConfig      string `json:"ipconfig"` // JSON-serialized mmdsIpConfig
+	RuntimeConfig string `json:"runtimeConfig"`
 }

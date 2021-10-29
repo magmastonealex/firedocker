@@ -1,8 +1,10 @@
 package main
 
 import (
+	"firedocker/pkg/dockersquasher"
 	"firedocker/pkg/firecracker"
 	"firedocker/pkg/networking"
+	"firedocker/pkg/storagemanager"
 	"fmt"
 )
 
@@ -12,69 +14,56 @@ func main() {
 		panic(err)
 	}
 
-	tapIf1, err := bnm.CreateTap()
-	if err != nil {
-		panic(err)
+	storage := storagemanager.CreateRawStorageManager("./scratch")
+
+	numVms := 1
+
+	tapInterfaces := make([]networking.TAPInterface, numVms)
+	vms := make([]firecracker.VMInstance, numVms)
+
+	for i := range tapInterfaces {
+		tapInterfaces[i], err = bnm.CreateTap()
+		if err != nil {
+			panic(err)
+		}
 	}
-	tapIf2, err := bnm.CreateTap()
-	if err != nil {
-		panic(err)
-	}
-	tapIf3, err := bnm.CreateTap()
+
+	outfile, cfg, err := dockersquasher.PullAndSquash(dockersquasher.WithOutputFile("rootfs.sqs"), dockersquasher.WithTempDirectory("tmp"), dockersquasher.WithImage("redis", "latest"))
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("TAP1: name: %s idx: %d IP: %s MAC %s\n", tapIf1.Name(), tapIf1.Idx(), tapIf1.IP().String(), tapIf1.MAC())
-
-	/*outfile, cfg, err := dockersquasher.PullAndSquash(dockersquasher.WithOutputFile("rootfs.sqs"), dockersquasher.WithTempDirectory("tmp"), dockersquasher.WithImage("ubuntu", "latest"))
-	if err != nil {
-		panic(err)
-	}*/
 	//fmt.Printf("Configuration: %+v\n", cfg)
 	fmt.Println("rootfs done, starting VM")
 
 	vmManager := firecracker.CreateManager()
-	instance, err := vmManager.StartInstance()
-	if err != nil {
-		panic(err)
+
+	for i := range vms {
+		vms[i], err = vmManager.StartInstance()
+		if err != nil {
+			panic(err)
+		}
+		scratchPath, err := storage.CreateFilesystemImage(vms[i].ID(), 200)
+		if err != nil {
+			panic(err)
+		}
+		if err := vms[i].ConfigureAndStart(firecracker.Config{
+			NetworkInterface:      tapInterfaces[i],
+			RootFilesystemPath:    outfile,
+			ScratchFilesystemPath: scratchPath,
+			RuntimeConfig: firecracker.ContainerRuntimeConfig{
+				Environment: cfg.Config.Env,
+				Entrypoint:  cfg.Config.Entrypoint,
+				Cmd:         cfg.Config.Cmd,
+				Workdir:     cfg.Config.WorkingDir,
+			},
+		}); err != nil {
+			panic(err)
+		}
 	}
 
-	if err := instance.ConfigureAndStart(firecracker.Config{
-		NetworkInterface:      tapIf1,
-		RootFilesystemPath:    "./rootfs.sqs",
-		ScratchFilesystemPath: "./scratch.ext4",
-	}); err != nil {
-		panic(err)
-	}
-
-	instance2, err := vmManager.StartInstance()
-	if err != nil {
-		panic(err)
-	}
-
-	if err := instance2.ConfigureAndStart(firecracker.Config{
-		NetworkInterface:      tapIf2,
-		RootFilesystemPath:    "./rootfs.sqs",
-		ScratchFilesystemPath: "./scratch2.ext4",
-	}); err != nil {
-		panic(err)
-	}
-
-	instance3, err := vmManager.StartInstance()
-	if err != nil {
-		panic(err)
-	}
-
-	if err := instance3.ConfigureAndStart(firecracker.Config{
-		NetworkInterface:      tapIf3,
-		RootFilesystemPath:    "./rootfs.sqs",
-		ScratchFilesystemPath: "./scratch3.ext4",
-	}); err != nil {
-		panic(err)
-	}
 	fmt.Println("Instance startup complete!")
-	instance.Wait()
-	instance2.Wait()
-	instance3.Wait()
+	for i := range vms {
+		vms[i].Wait()
+	}
 }
