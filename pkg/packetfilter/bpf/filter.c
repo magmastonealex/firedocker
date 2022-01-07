@@ -177,4 +177,4 @@ int tc_ingress(struct __sk_buff *skb)
 }
 
 
-char __license[] __section("license") = "GPL";
+char __license[] __section("license") = "";
