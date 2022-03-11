@@ -17,7 +17,29 @@ It's similar in spirit to something like Ignite, allowing running Docker images 
 
 **Note:** I'm building this as a hobby project. It's in no way ready for anyone else to use yet...
 
+How to Run
+---
+
+- Download Firecracker 0.25 (1.0.0 has a very tiny breaking change that I haven't updated for - just a parameter rename). Put it in a folder as the firecracker binary.
+- Build a kernel - creating vmlinux (make vmlinux). There's a config in this repo for 5.14.14 for you to use, but it's pretty flexible. 
+- Go into cmd/preinit, go build -tags netgo. Then make an initrd: mkdir tmp && cp preinit tmp/init && cd tmp, then find . -print0 | cpio --null --create --verbose --format=newc > ../initrd.cpio
+- Copy initrd.cpio into your runtime folder.
+- Go into cmd/manager, and go build. Copy manager into your runtime folder.
+- mkdir tmp in your runtime folder
+- mkdir scratch
+
+Then you can (in theory) go into your runtime folder and run sudo ./manager and some Redis VMs will start up.There's an SSH server built into the init system on port 2200 so you can log into them with un: foo, pw: bar. Or just ping em to prove it works
+
+How to Run on ARM64
+---
+
+- Make sure you have a kernel with KVM support enabled and DTBs correctly set up.
+- Cross-compile the kernel as described below
+- Cross compile firedocker with GOARCH=arm64
+- Otherwise the same as above.
+
 Big TODOs:
+---
 
 - ~~Proof-Of-Concept - eBPF isolation, docker images to squashfs, golang init that can set everything up for a working system, overlayfs RW root, works on arm64 & x86_64~~ Done! Now to make it real.
 - ~~Docker image squashing into squashfs img as indepedent tested package~~
